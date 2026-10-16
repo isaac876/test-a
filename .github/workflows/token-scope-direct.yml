@@ -1,0 +1,44 @@
+name: app-token-scope-direct
+
+on: workflow_dispatch
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint app token via Anthropic exchange + check scope
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -uo pipefail
+          echo "=== get workflow OIDC token (same audience the action uses) ==="
+          OIDC=$(curl -s -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=claude-code-github-action" | jq -r '.value // empty')
+          echo "oidc token: $([ -n "$OIDC" ] && echo yes len=${#OIDC} || echo NO)"
+          echo
+          echo "=== exchange it at the action's own endpoint ==="
+          RESP=$(curl -s -X POST -H "Authorization: Bearer $OIDC" \
+            https://api.anthropic.com/api/github/github-app-token-exchange)
+          TOK=$(echo "$RESP" | jq -r '.token // .app_token // empty')
+          echo "app token minted: $([ -n "$TOK" ] && echo "yes len=${#TOK}" || echo NO)"
+          echo "exchange response (token stripped):"
+          echo "$RESP" | jq 'del(.token, .app_token)' | head -c 800
+          echo
+          if [ -z "$TOK" ]; then echo "MINT FAILED - stopping"; exit 0; fi
+          echo
+          echo "=== what this token can see ==="
+          curl -s -o /tmp/who.json -w 'GET /installation/repositories -> HTTP %{http_code}\n' \
+            -H "Authorization: Bearer $TOK" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/installation/repositories?per_page=100"
+          echo "total_count: $(jq -r '.total_count // "n/a"' /tmp/who.json)"
+          jq -r '.repositories[]?.full_name' /tmp/who.json
+          echo
+          echo "=== cross-repo READ control: $OWNER/test-b ==="
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $TOK" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$OWNER/test-b")
+          echo "GET /repos/$OWNER/test-b -> HTTP $CODE   (200 = installation-wide, 404 = repo-scoped)"
