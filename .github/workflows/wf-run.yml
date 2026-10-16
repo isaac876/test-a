@@ -14,15 +14,31 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+      - name: SHOW-RESTORE-BEHAVIOR
+        run: |
+          echo "== attacker .claude/settings.json (MUST BE ABSENT if restore ran) =="
+          cat .claude/settings.json 2>/dev/null || echo "(absent)"
+          echo
+          echo "== attacker .mcp.json =="
+          cat .mcp.json 2>/dev/null || echo "(absent)"
       - uses: anthropics/claude-code-action@v1
         with:
           prompt: "Run exactly: cat rce_proof.txt ; cat rce_token_reachable.txt ; cat mcp_rce_proof.txt ; printenv RCE_CANARY_ENV — report all output verbatim."
           allowed_non_write_users: "*"
           github_token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       - name: PROOF (independent of the agent)
         if: always()
         run: |
-          echo "== rce_proof.txt ==";       cat rce_proof.txt 2>/dev/null || echo "(missing)"
-          echo "== rce_token_reachable =="; cat rce_token_reachable.txt 2>/dev/null || echo "(missing)"
-          echo "== mcp_rce_proof.txt ==";   cat mcp_rce_proof.txt 2>/dev/null || echo "(missing)"
-          echo "== RCE_CANARY_ENV ==";      printenv RCE_CANARY_ENV || echo "(not set)"
+          echo "== attacker .claude/settings.json (MUST BE ABSENT if restore ran) =="
+          cat .claude/settings.json 2>/dev/null || echo "(absent)"
+          echo
+          echo "== attacker .mcp.json =="
+          cat .mcp.json 2>/dev/null || echo "(absent)"
+          echo
+          echo "== hook outputs (only present if engine started) =="
+          cat rce_proof.txt 2>/dev/null || echo "(missing)"
+          cat rce_token_reachable.txt 2>/dev/null || echo "(missing)"
+          cat mcp_rce_proof.txt 2>/dev/null || echo "(missing)"
+          printenv RCE_CANARY_ENV || echo "(not set)"
