@@ -1,0 +1,57 @@
+name: claude-app-token-scope-probe
+
+on: workflow_dispatch
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run claude-code-action (prepare phase is enough)
+        id: cca
+        continue-on-error: true
+        uses: anthropics/claude-code-action@1d6de8cb0c237e7c15e9e1bdf973826ebae490cc
+        with:
+          prompt: "Reply with the single word OK."
+          claude_args: "--max-turns 1"
+
+      - name: Probe the scope of the token in .git/config
+        if: always()
+        env:
+          OTHER_REPO: ${{ github.repository_owner }}/test-b
+        run: |
+          set -uo pipefail
+          echo "=== .git/config remote (token masked) ==="
+          sed -E 's#(x-access-token:)[^@]+#\1REDACTED#' .git/config | grep -A2 'remote "origin"' || true
+          RAW=$(grep -oE 'x-access-token:[^@]+' .git/config || true)
+          TOK="${RAW#x-access-token:}"
+          echo "token found: $([ -n "$TOK" ] && echo yes || echo no)  len=${#TOK}"
+          if [ -n "$TOK" ] && [ "$TOK" = "${{ github.token }}" ]; then
+            echo "WARNING: .git/config still holds the actions checkout token."
+            echo "The action never reached its git-config write -> result is INCONCLUSIVE."
+          fi
+          echo
+          echo "=== what this token can see ==="
+          curl -s -o /tmp/who.json -w 'GET /installation/repositories -> HTTP %{http_code}\n' \
+            -H "Authorization: Bearer $TOK" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/installation/repositories?per_page=100"
+          echo "total_count: $(grep -o '"total_count": *[0-9]*' /tmp/who.json || echo n/a)"
+          grep -o '"full_name": *"[^"]*"' /tmp/who.json || true
+          echo
+          echo "=== cross-repo READ control: $OTHER_REPO ==="
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $TOK" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$OTHER_REPO")
+          echo "GET /repos/$OTHER_REPO -> HTTP $CODE   (200 = token reaches a repo it was not minted for)"
+
+      - name: Upload raw evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: token-scope-probe
+          path: /tmp/who.json
+          if-no-files-found: warn
