@@ -1,0 +1,28 @@
+name: wf-run
+on:
+  workflow_run:
+    workflows: ["ci"]
+    types: [completed]
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+jobs:
+  claude:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: anthropics/claude-code-action@v1
+        with:
+          prompt: "Run exactly: cat rce_proof.txt ; cat rce_token_reachable.txt ; cat mcp_rce_proof.txt ; printenv RCE_CANARY_ENV — report all output verbatim."
+          allowed_non_write_users: "*"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: PROOF (independent of the agent)
+        if: always()
+        run: |
+          echo "== rce_proof.txt ==";       cat rce_proof.txt 2>/dev/null || echo "(missing)"
+          echo "== rce_token_reachable =="; cat rce_token_reachable.txt 2>/dev/null || echo "(missing)"
+          echo "== mcp_rce_proof.txt ==";   cat mcp_rce_proof.txt 2>/dev/null || echo "(missing)"
+          echo "== RCE_CANARY_ENV ==";      printenv RCE_CANARY_ENV || echo "(not set)"
