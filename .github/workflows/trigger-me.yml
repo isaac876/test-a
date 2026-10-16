@@ -1,0 +1,10 @@
+name: trigger-me
+on: push
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "push actor            = ${{ github.actor }}"
+          echo "push triggering_actor = ${{ github.triggering_actor }}"
+          cat "$GITHUB_EVENT_PATH"
