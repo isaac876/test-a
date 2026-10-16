@@ -1,0 +1,22 @@
+name: actor-probe
+on:
+  workflow_run:
+    workflows: ["trigger-me"]
+    types: [completed]
+jobs:
+  log:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "== top-level context =="
+          echo "github.actor             = ${{ github.actor }}"
+          echo "github.triggering_actor  = ${{ github.triggering_actor }}"
+          echo "== workflow_run payload =="
+          echo "wr.name                  = ${{ github.event.workflow_run.name }}"
+          echo "wr.event                 = ${{ github.event.workflow_run.event }}"
+          echo "wr.actor.login           = ${{ github.event.workflow_run.actor.login }} (type: ${{ github.event.workflow_run.actor.type }})"
+          echo "wr.head_repo.owner       = ${{ github.event.workflow_run.head_repository.owner.login }}"
+          echo "wr.head_commit.committer = ${{ github.event.workflow_run.head_commit.committer.username }}"
+          echo "wr.head_sha              = ${{ github.event.workflow_run.head_sha }}"
+          echo "== raw event JSON =="
+          cat "$GITHUB_EVENT_PATH"
